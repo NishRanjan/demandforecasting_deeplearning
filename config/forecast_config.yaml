@@ -1,0 +1,171 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Demand Forecasting Pipeline — Master Config
+# All inputs, model parameters, and feature lists are defined here.
+# Change only this file to switch datasets, models, or environments.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Platform ──────────────────────────────────────────────────────────────────
+platform:
+  mode: "local"                          # "local" | "databricks"
+  use_mlflow: false                      # Set true to enable MLflow tracking
+  mlflow_experiment_name: "${MLFLOW_EXPERIMENT_NAME}"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  # local mode: reads from source_path (relative to demand_forecasting/ or absolute)
+  source_path: "data/raw/sales.csv"
+  # databricks mode: reads from blob_url via Spark
+  # Set BLOB_URL environment variable instead of hardcoding here
+  blob_url: "${BLOB_URL}"
+
+  date_col: "date"
+  date_format: "%Y-%m-%d"               # Adjust if source uses a different format
+  target_col: "Volume"
+  grain_cols:                            # Columns that together identify one time series
+    - "sku"
+    - "state"
+  freq: "MS"                             # Month-start (pandas offset alias)
+
+# ── Feature Schema ────────────────────────────────────────────────────────────
+# Define every column the models may use. Models read only what they need.
+features:
+  static_categoricals:
+    - "sku"
+    - "SKU format"
+    - "SKU brand"
+    - "SKU subcategory"
+    - "SKU category"
+    - "state"
+    - "State group"
+    - "Region"
+
+  time_varying_known:                    # Future values are known at forecast time
+    - "month"
+    - "qtr_bucket"
+
+  time_varying_unknown:                  # Only historical values are available
+    - "sales_uoc"
+    - "Sales vol - Cases"
+    - "Sales vol - units"
+
+  continuous:
+    lag_cols:
+      - "btl_lag1"
+      - "btl_lag2"
+      - "btl_lag3"
+    marketing:
+      - "BTL%"
+      - "GRP"
+      - "SOV"
+      - "GRP_lag1"
+      - "SOV_lag1"
+    macro:
+      - "GDP"
+      - "Inflation"
+      - "Price"
+      - "MRP"
+      - "per_capita_income"
+      - "Income_Inflation_Index"
+    weather:
+      - "Temperature"
+      - "humidity"
+      - "precipitation"
+      - "breeding_ground_index"
+    saliency:
+      - "ASM_saliency_monthly"
+      - "DT_saliency_monthly"
+      - "Category_saliency_monthly"
+      - "AOP_saliency_monthly"
+      - "ASM_saliency_quarterly"
+      - "DT_saliency_quarterly"
+    forecast_helpers:
+      - "L3M_moving_avg_forecast"
+      - "L4M_moving_avg_forecast"
+    product:
+      - "months_since_1st_existance"
+      - "vol_zero_count_L2to6m"
+
+# ── Preprocessing ─────────────────────────────────────────────────────────────
+preprocessing:
+  outlier_method: "iqr"                  # "iqr" | "zscore" | "none"
+  iqr_multiplier: 1.5
+  imputation_method: "forward_fill"      # "forward_fill" | "interpolate" | "zero"
+  log1p_transform: true                  # Applied to target column before training
+  min_history_months: 12                 # Series with fewer months tagged as "tail"
+
+# ── Backtest Settings ─────────────────────────────────────────────────────────
+backtest:
+  n_rolling_windows: 3                   # Number of monthly rolling origins to backtest
+  data_latency_months: 1                 # M+1 convention: train→M, first forecast = M+2
+  forecast_horizon: 2                    # Prediction length per window (months)
+  forward_forecast_months: 12            # Length of the final forward forecast
+
+# ── Models ────────────────────────────────────────────────────────────────────
+models:
+  chronos:
+    enabled: true
+    model_name: "amazon/chronos-t5-large"   # HuggingFace model ID
+    batch_size: 128
+    quantiles: [0.1, 0.5, 0.9]
+    device: "cpu"                        # "cuda" | "cpu"  (auto-detected if omitted)
+    context_length: 24                   # Past months fed as context
+
+  tft:
+    enabled: true
+    max_encoder_length: 24
+    max_prediction_length: 2             # Must match backtest.forecast_horizon
+    hidden_size: 45
+    attention_head_size: 4
+    dropout: 0.2286
+    hidden_continuous_size: 26
+    learning_rate: 0.003
+    max_epochs: 50
+    batch_size: 64
+    num_workers: 0                       # Set >0 on Linux/Mac; keep 0 on Windows
+    early_stopping_patience: 10
+    gradient_clip_val: 0.0469
+    accelerator: "cpu"                   # "gpu" | "cpu"
+    devices: 1
+
+  nhits:
+    enabled: true
+    max_encoder_length: 24
+    max_prediction_length: 2
+    learning_rate: 0.001
+    max_epochs: 50
+    batch_size: 64
+    num_workers: 0
+    early_stopping_patience: 10
+    gradient_clip_val: 0.1
+    accelerator: "cpu"
+    devices: 1
+
+  deepar:
+    enabled: true
+    max_encoder_length: 24
+    max_prediction_length: 2
+    hidden_size: 32
+    rnn_layers: 2
+    dropout: 0.1
+    learning_rate: 0.001
+    max_epochs: 50
+    batch_size: 64
+    num_workers: 0
+    early_stopping_patience: 10
+    gradient_clip_val: 0.1
+    accelerator: "cpu"
+    devices: 1
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+evaluation:
+  primary_metric: "wmape"
+  metrics:
+    - "wmape"
+    - "r2"
+    - "bias"
+    - "quantile_coverage"
+  report_groupby:                        # Granularity for per-series metrics output
+    - "sku"
+    - "state"
+  output_path: "outputs/comparison_results.csv"
+  forecast_output_dir: "outputs/forecasts"

@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m py_compile \"$CLAUDE_TOOL_OUTPUT_PATH\" 2>&1 && echo 'Syntax OK' || echo 'SYNTAX ERROR — fix before proceeding'",
+            "when": "$.tool_input.file_path =~ /\\.py$/"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import yaml, sys; yaml.safe_load(open('$CLAUDE_TOOL_OUTPUT_PATH')); print('YAML valid')\" 2>&1 || echo 'YAML PARSE ERROR — check syntax'",
+            "when": "$.tool_input.file_path =~ /\\.yaml$|.yml$/"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python run_pipeline.py*)",
+      "Bash(python -m py_compile*)",
+      "Bash(python -c \"import yaml*)",
+      "Bash(pip install*)",
+      "Bash(pip list*)"
+    ]
+  }
+}
